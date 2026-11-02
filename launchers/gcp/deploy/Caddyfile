@@ -1,0 +1,5 @@
+# Installed as /etc/caddy/Caddyfile by install.sh, which writes the launcher's DNS name in place of the placeholder below.
+# Caddy gets and renews the certificate for that name itself and passes every request to the launcher on 127.0.0.1:8080.
+__NAME__ {
+	reverse_proxy 127.0.0.1:8080
+}

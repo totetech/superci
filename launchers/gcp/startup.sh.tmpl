@@ -1,0 +1,16 @@
+#!/bin/bash
+exec > >(tee /var/log/superci.log > /dev/console) 2>&1
+shutdown -h +__MAX_MINUTES__
+__NOTICE_WATCHER__
+# What the runner is started with (set below when it only says why a job fails).
+RUNNER_ENV=
+__FAIL_HOOK__
+# The image has the runner; its version is only checked and logged here (the first line of what `run.sh --version` prints).
+want=__RUNNER_VERSION__
+v=$(cd /home/runner && sudo -u runner -H timeout 10 ./run.sh --version 2>/dev/null | head -n 1)
+echo "superci: runner ${v:-unknown} (expected $want)"
+[ "$v" = "$want" ] || echo "superci: the installed runner differs from the expected version"
+# (RUNNER_ENV is unquoted on purpose: it is a word or nothing.)
+# shellcheck disable=SC2086
+cd /home/runner && sudo -u runner -H env $RUNNER_ENV ./run.sh --jitconfig __JIT__
+poweroff

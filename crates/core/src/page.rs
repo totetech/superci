@@ -33,7 +33,7 @@ code{font:12px var(--mono);overflow-wrap:anywhere}form{display:inline}p{margin:0
 .button.secondary,:root[data-theme=dark] .button.secondary{color:var(--ink);background:var(--card);border:1px solid var(--rule);box-shadow:0 1px 2px rgba(16,20,28,.05)}.button.secondary:hover{background:var(--card-2)}
 .chip{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:30px;padding:5px 12px;border:1px solid var(--rule);border-radius:999px;background:var(--card);color:var(--ink);font-size:12px;font-weight:500;box-shadow:0 1px 2px rgba(0,0,0,.03);white-space:nowrap}
 .chip:hover{background:var(--card-2);border-color:var(--faint)}
-input[type=text],input[type=password],select{height:36px;padding:0 12px;border:1px solid var(--rule);border-radius:10px;background:var(--card);color:var(--ink)}
+input[type=text],input[type=password],input[type=url],select{height:36px;padding:0 12px;border:1px solid var(--rule);border-radius:10px;background:var(--card);color:var(--ink)}
 .layout{min-height:100vh;display:grid;grid-template-columns:264px minmax(0,1fr)}
 .side{position:sticky;top:0;height:100vh;display:flex;flex-direction:column;padding:20px 14px 16px;border-right:1px solid var(--rule-soft);background:var(--bg-deep);overflow-y:auto}
 .brand{display:flex;align-items:center;gap:8px;padding:0 8px;font-size:15px;font-weight:620;letter-spacing:-.035em}.brand>span{flex:1}.mark{width:22px;height:22px}
@@ -134,7 +134,7 @@ details.more summary{list-style:none;cursor:pointer}details.more summary::-webki
 .stack{display:grid;grid-template-columns:repeat(2,16px);gap:3px;place-content:center;width:36px;height:36px;border-radius:10px;background:var(--card-2)}.stack .logo{border-radius:4px}
 .pick.soon{border-style:dashed;background-color:transparent}.pick.soon strong{color:var(--muted)}.pick.soon small{color:var(--faint)}.pick.soon .logo{filter:grayscale(.6);opacity:.7}
 .soon-tag{padding:2px 9px;border:1px solid var(--rule);border-radius:999px;color:var(--faint);font-size:11px;font-weight:600}
-.button.sm{height:32px;padding:0 12px;font-size:12.5px}.pick-end form{display:flex;gap:8px;align-items:center}.pick-end select{height:32px;padding:0 8px;font-size:12.5px}.pick-end{gap:8px}.picks.page{max-width:760px}
+.button.sm{height:32px;padding:0 12px;font-size:12.5px}.pick-end form{display:flex;gap:8px;align-items:center}.pick-end select{height:32px;padding:0 8px;font-size:12.5px}.pick-end input[type=url]{height:32px;width:240px;max-width:100%;min-width:0;padding:0 10px;font-size:12.5px}.pick-end{gap:8px}.picks.page{max-width:760px}
 .first{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 2px 2px;border-top:1px solid var(--rule-soft)}.first strong{display:block;font-size:14px;font-weight:600;letter-spacing:-.02em}.first small{display:block;margin-top:2px;color:var(--muted);font-size:12.5px;line-height:1.4}
 .then{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;padding:18px 0 4px;border-top:1px solid var(--rule-soft)}.then-step{display:grid;grid-template-columns:28px minmax(0,1fr);gap:12px;align-items:start}
 .then-step .num{background:var(--card-2);color:var(--faint)}.then-step h3{font-size:14px;letter-spacing:-.02em;line-height:1.3;color:var(--muted)}.then-step p{margin-top:3px;color:var(--faint);font-size:13px}
@@ -504,6 +504,13 @@ pub fn nearby_regions(region: &str) -> &'static [&'static str] { aws_region(regi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A field for an address looks as the page's other text fields do (its row's size, in a provider's row).
+    #[test]
+    fn a_url_field_is_styled_as_the_text_fields_are() {
+        let css = document(200, "t", "", None).body_text();
+        assert!(css.contains("input[type=text],input[type=password],input[type=url],select{height:36px;") && css.contains(".pick-end input[type=url]{height:32px;"));
+    }
 
     #[test]
     fn escaping() {

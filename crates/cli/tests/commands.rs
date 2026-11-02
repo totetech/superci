@@ -371,8 +371,10 @@ fn each_command_says_what_it_needs_and_what_it_would_do_and_changes_nothing() {
         (&["planes", "delete"], "Say which: `superci planes delete ID --confirm`"),
         (&["planes", "create", "gcp"], "Say where: `superci planes create aws --region=us-east-1`"),
         (&["planes", "create", "aws"], "Say where: --region=us-east-1"),
-        (&["runners", "create", "gcp"], "Say which: `superci runners create aws`"),
-        (&["runners", "delete", "gcp"], "Say which: `superci runners delete aws --confirm`"),
+        (&["runners", "create", "gcp"], "Say its address: `superci runners create gcp --url=https://…`"),
+        (&["runners", "create", "gcp", "--url=http://launcher.example"], "Say its address: `superci runners create gcp --url=https://…`"),
+        (&["runners", "create", "frob"], "Say which: `superci runners create aws`"),
+        (&["runners", "delete", "frob"], "Say which: `superci runners delete aws --confirm`"),
         (&["jobs", "retrieve", "x1"], "Say which: `superci jobs retrieve ID`"),
         (&["login", "gcp"], "Say which: `superci login aws`"),
     ] {
@@ -398,6 +400,8 @@ fn each_command_says_what_it_needs_and_what_it_would_do_and_changes_nothing() {
         (&["images", "delete", "ca-central-1", "--confirm", "--dry-run"], "remove your copy of the image jobs run on from ca-central-1"),
         (&["runners", "delete", "aws", "--only-here", "--confirm", "--dry-run"], "leaving what SuperCI made for it there"),
         (&["runners", "create", "aws", "--dry-run"], "let aws run jobs for the control plane in use"),
+        (&["runners", "create", "gcp", "--url=https://launcher.example", "--dry-run"], "let gcp run jobs for the control plane in use"),
+        (&["runners", "delete", "gcp", "--confirm", "--dry-run"], "remove gcp as a runner provider: jobs stop going to it, and the launcher itself keeps running where it was deployed"),
         (&["planes", "delete", "testplane0002", "--confirm", "--dry-run"], "delete the control plane testplane0002"),
         (&["planes", "allow", "--dry-run"], "The AWS role of the control plane testplane0001 has what this version asks for: nothing would change."),
         (&["planes", "update", "--dry-run"], &format!("deploy the control plane in use (AWS · 111111111111 · us-east-1) again: it is on {} already", env!("CARGO_PKG_VERSION"))),
@@ -1331,7 +1335,7 @@ fn a_ci_whose_app_is_installed_nowhere_with_two_gitlabs_and_no_runner_provider_s
     let said = |args: &[&str]| { let o = superci(&home, args); (o.status.code(), String::from_utf8_lossy(&o.stdout).to_string() + &String::from_utf8_lossy(&o.stderr)) };
     assert_eq!(said(&["connections", "list"]), (Some(0), "github  acme  its App is not installed yet\ngitlab  https://gitlab.com\ngitlab  https://gitlab.example.com  (other)\n".to_string()));
     let (code, runners) = said(&["runners", "list"]);
-    assert!(code == Some(0) && runners.starts_with("No runner provider yet: `superci runners create aws` (or cloudflare, or modal).\n"), "{runners}");
+    assert!(code == Some(0) && runners.starts_with("No runner provider yet: `superci runners create aws` (or cloudflare, modal, or gcp).\n"), "{runners}");
     let _ = std::fs::remove_dir_all(&home);
 }
 

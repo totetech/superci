@@ -266,7 +266,7 @@ pub struct AwsConnection { pub account_id: String, pub region: String, pub role_
 pub struct Job {
     pub job_id: u64, pub run_id: u64, pub repo: String, pub state: String, pub at_ms: u64,
     pub runner: Option<String>, pub runner_id: Option<u64>, pub installation_id: u64,
-    /// Where it ran ("aws", "cloudflare", "modal"), the machine's id there, and its kind.
+    /// Where it ran ("aws", "cloudflare", "modal", "gcp"), the machine's id there, and its kind.
     pub cloud: String, pub machine_id: Option<String>, pub machine_type: Option<String>,
     pub error: Option<String>, pub seen_in_progress: bool,
     /// The label it asked for (`superci`, `superci/cpu=8/arch=arm64`): what machine, and what its runner registers as.
@@ -714,7 +714,7 @@ const NO_GPU_QUOTA: &str = "AWS lets this account run no GPU machines yet: ask A
 pub fn cloud_name(cloud: &str) -> &str { CLOUD_NAMES.iter().find(|(id, _)| *id == cloud).map_or(cloud, |(_, name)| *name) }
 
 /// Each cloud a job's machine can be in, as people read it.
-pub const CLOUD_NAMES: [(&str, &str); 4] = [("aws", "AWS"), (AWS_ON_DEMAND, "AWS on-demand"), ("cloudflare", "Cloudflare"), ("modal", "Modal")];
+pub const CLOUD_NAMES: [(&str, &str); 5] = [("aws", "AWS"), (AWS_ON_DEMAND, "AWS on-demand"), ("cloudflare", "Cloudflare"), ("modal", "Modal"), ("gcp", "GCP")];
 
 /// AWS's on-demand machines, as a place of their own in the order (`aws` there is its spot machines): when no region
 /// has a spot machine for a job, the job goes to the next place in the order that can run it, which may be this one.
@@ -1011,9 +1011,9 @@ pub fn usage_of(hours: &std::collections::BTreeMap<u64, Hour>, now: u64, step_ms
 }
 
 
-/// What a cloud's containers can be (Cloudflare's, or Modal's sandboxes): started by this control plane itself, or
-/// by a launcher.
-fn capacity_of(cloud: &str) -> Capacity { if cloud == "cloudflare" { Capacity::cloudflare() } else { Capacity::modal() } }
+/// What a cloud's containers can be (Cloudflare's, Modal's sandboxes, or GCP's machines): started by this control
+/// plane itself, or by a launcher.
+fn capacity_of(cloud: &str) -> Capacity { match cloud { "cloudflare" => Capacity::cloudflare(), "gcp" => Capacity::gcp(), _ => Capacity::modal() } }
 
 fn active(j: &Job) -> bool { ["launching", "launched", "running"].contains(&j.state.as_str()) }
 
@@ -1398,7 +1398,7 @@ impl<'a> ControlPlane<'a> {
                 }
                 // What the machine runs with this answer: the reason, in the job's own log on GitHub, where it is
                 // otherwise only "The runner has received a shutdown signal" (a GitHub job: GitLab's says its own).
-                let said = if !j.gitlab.is_empty() || q.contains_key("gl") { String::new() } else if j.provider == "local" { aws::reclaim_said("SuperCI starts the job again by itself at once, off spot machines.") } else { aws::reclaim_said("SuperCI runs the job again by itself, off spot machines, once its run has finished.") };
+                let said = if !j.gitlab.is_empty() || q.contains_key("gl") { String::new() } else if j.provider == "local" { aws::reclaim_said(&j.cloud, "SuperCI starts the job again by itself, off spot machines.") } else { aws::reclaim_said(&j.cloud, "SuperCI runs the job again by itself, off spot machines, once its run has finished.") };
                 Ok(Response::new(200, "text/x-shellscript", said))
             }
             // A machine saying how its own start went (see `MachineStart`): with its link, and only what it may say.
@@ -2264,7 +2264,8 @@ impl<'a> ControlPlane<'a> {
                             put_json(self.store, &rerun_key(&project, ev.pipeline_id, &ev.name), &now).await?;
                             let asked = gitlab::retry_job(self.http, gl, ev.project_id, ev.job_id).await;
                             if asked.is_err() { self.store.delete(&rerun_key(&project, ev.pipeline_id, &ev.name)).await?; }
-                            j.error = Some(match &asked { Ok(()) => "AWS took back its spot machine; SuperCI ran the job again by itself, off spot machines".to_string(), Err(e) => format!("AWS took back its spot machine; not run again: {e}").chars().take(300).collect() });
+                            let cloud = cloud_name(&j.cloud);
+                            j.error = Some(match &asked { Ok(()) => format!("{cloud} took back its spot machine; SuperCI ran the job again by itself, off spot machines"), Err(e) => format!("{cloud} took back its spot machine; not run again: {e}").chars().take(300).collect() });
                             j.rerun = Some(Rerun { job_id: ev.job_id, run_id: ev.pipeline_id, repo: ev.project.clone(), name: ev.name.clone(), state: if asked.is_ok() { "asked".into() } else { "not run again".into() }, at_ms: now });
                         }
                         self.settle(plane_url, &mut j).await;
@@ -2507,7 +2508,8 @@ impl<'a> ControlPlane<'a> {
             None
         }.await;
         let Some(state) = settled else { return false };
-        j.error = Some(if state == "asked" { "AWS took back its spot machine; SuperCI ran the job again by itself, off spot machines (the run's next attempt)".into() } else { format!("AWS took back its spot machine; {state}") });
+        let cloud = cloud_name(&j.cloud);
+        j.error = Some(if state == "asked" { format!("{cloud} took back its spot machine; SuperCI ran the job again by itself, off spot machines (the run's next attempt)") } else { format!("{cloud} took back its spot machine; {state}") });
         r.state = state;
         j.rerun = Some(r);
         true
@@ -2631,6 +2633,7 @@ impl<'a> ControlPlane<'a> {
                 continue
             };
             if gitlab && cloud == "modal" { never.push("Modal runs no Docker (GitLab jobs run in Docker)".into()); continue }
+            if gitlab && cloud == "gcp" { never.push("GCP's launcher runs no GitLab jobs".into()); continue }
             if gitlab && spec.os() == "windows" { never.push(format!("{name} runs no GitLab jobs on Windows")); continue }
             let size = match capacity.fit(spec) { Ok(size) => size, Err(why) => { never.push(format!("{name} runs {why}")); continue } };
             // Its label asks for an on-demand machine: not AWS's spot ones.
@@ -3448,7 +3451,21 @@ impl<'a> ControlPlane<'a> {
                         let mut body = serde_json::json!({ "name": name, "job": job.job_id, "repo": job.repo, "max_minutes": self.machine_minutes(&a.cloud), "cpu": size.cpu, "ram_gb": size.ram_gb, "disk_gb": size.disk_gb, "location": self.config.cloudflare_location });
                         if a.cloud == "cloudflare" { if let Some(i) = &self.config.cloudflare_image { body["image_url"] = i.clone().into() } }
                         if let Some(g) = size.gpu { body["gpu"] = g.to_uppercase().into() }
+                        // A launcher whose cloud has spot machines is told whether this one is spot (not when the label asks for
+                        // on-demand, nor for a job run again after its spot machine was taken back), and, for a spot one, where
+                        // to say when it is taken back: a link only that machine has, as AWS's spot machines have.
+                        let spot_capable = a.cloud == "gcp";
+                        let spot = spot_capable && !spec.on_demand() && !job.no_spot;
+                        if spot_capable {
+                            body["spot"] = spot.into();
+                            job.notice = spot.then(|| crate::crypto::random_token(18));
+                            // (A GitLab job is found by its own id: no runner's name is kept for its machine.)
+                            if let Some(t) = &job.notice { body["notice"] = if gitlab { format!("{plane_url}/interrupted?gl={}&t={t}", gitlab::local(&job.gitlab, job.job_id)) } else { format!("{plane_url}/interrupted?runner={name}&t={t}") }.into() }
+                        }
                         let v = self.launcher_call(plane_url, &a, "/launch", with_work(body, &work)).await?;
+                        // (What it says of its own machine is believed over the formula: its price, and whether it is spot.)
+                        if let Some(p) = v["usd_per_hour"].as_f64() { job.usd_per_hour = Some(p) }
+                        if let Some(spot) = v["spot"].as_bool() { job.on_demand = !spot }
                         Ok(Tried::Started(v["id"].as_str().ok_or("launcher answered without an id")?.to_string(), v["kind"].as_str().unwrap_or_default().to_string()))
                     }.await,
                 };
@@ -3608,6 +3625,15 @@ impl<'a> ControlPlane<'a> {
                 self.keep(&key, &*job).await?;
                 return self.timer.wake_in(30_000).await;
             }
+            // A launcher answered 429: its cloud has no room for the machine now. That is no start that failed: the job
+            // waits and the sweep asks again (no retry is counted, and the place is not held against the launcher).
+            if let Some((_, said)) = e.split_once(" launcher: 429 ") {
+                job.failed_at.retain(|p| !e.contains(&format!("{p} launcher: 429 ")));
+                job.state = "waiting".into();
+                job.error = Some(format!("waiting: {}", said.chars().take(280).collect::<String>()));
+                self.keep(&key, &*job).await?;
+                return self.timer.wake_in(20_000).await;
+            }
             // A place was picked and starting the machine failed (Cloudflare "temporarily unavailable", a spot shortage):
             // tried again, twice; GitHub would otherwise keep the job queued for a day. No place for it: failed at once.
             // (Not what AWS's budget stopped: trying again changes nothing until the rule is lifted. Said at once.)
@@ -3644,7 +3670,7 @@ impl<'a> ControlPlane<'a> {
         enum Place { Own, Launcher(Launcher), Aws(AwsConnection) }
         let mut places = vec![];
         if self.own_containers() { places.push(Place::Own) }
-        places.extend(["cloudflare", "modal"].iter().filter_map(|c| self.config.launchers.iter().find(|a| a.cloud == *c)).map(|a| Place::Launcher(a.clone())));
+        places.extend(["cloudflare", "modal", "gcp"].iter().filter_map(|c| self.config.launchers.iter().find(|a| a.cloud == *c)).map(|a| Place::Launcher(a.clone())));
         if let Ok(Some(a)) = self.aws_connection().await.map(|a| a.filter(|a| a.connected)) { places.push(Place::Aws(a)) }
         if places.is_empty() { return }
         let Some(app) = self.app_of(job) else { return };
@@ -4322,7 +4348,8 @@ impl<'a> ControlPlane<'a> {
                     j["state"] = "pending".into();
                     j["off_spot"] = true.into();
                     // (Its first attempt, said with the run: its job, and why it is started again.)
-                    j["restarted"] = serde_json::json!({ "job_id": j["job_id"].clone(), "why": "AWS took back its spot machine" });
+                    let cloud = record.as_ref().map_or("", |r| cloud_name(&r.cloud));
+                    j["restarted"] = serde_json::json!({ "job_id": j["job_id"].clone(), "why": format!("{cloud} took back its spot machine") });
                     let o = j.as_object_mut().expect("an object: its fields were just set");
                     o.remove("job_id");
                     o.remove("token");
@@ -4886,10 +4913,11 @@ impl<'a> ControlPlane<'a> {
             // (A run from a computer's is started again by its run, at once: see `advance_run`.)
             if j.interrupted && j.rerun.is_none() && !matches!(ev.conclusion.as_deref(), Some("success" | "skipped" | "neutral")) {
                 j.state = "failed".into();
+                let cloud = cloud_name(&j.cloud);
                 if j.provider == "local" {
-                    j.error = Some("AWS took back its spot machine; SuperCI starts the job again by itself, off spot machines".into());
+                    j.error = Some(format!("{cloud} took back its spot machine; SuperCI starts the job again by itself, off spot machines"));
                 } else {
-                    j.error = Some("AWS took back its spot machine; SuperCI runs the job again by itself, off spot machines, once its run has finished (GitHub runs a job again only then)".into());
+                    j.error = Some(format!("{cloud} took back its spot machine; SuperCI runs the job again by itself, off spot machines, once its run has finished (GitHub runs a job again only then)"));
                     j.rerun = Some(Rerun { job_id, run_id: ev.run_id, repo: ev.repo.clone(), name: ev.name.clone(), state: "pending".into(), at_ms: self.clock.now_ms() });
                     self.timer.wake_in(60_000).await?;
                 }
@@ -5034,11 +5062,31 @@ impl<'a> ControlPlane<'a> {
                 continue;
             }
             if !["launched", "running", "orphan"].contains(&j.state.as_str()) { continue; }
+            // A run from a computer's job whose launcher machine is gone (GCP deletes a spot machine it takes back, and its
+            // runner may not get to say how the job ended): its launcher is asked, once its machine has had two minutes, and
+            // only its answer "gone" ends the job, as its machine's end would (an error or any other answer, as "ending" for a
+            // machine still stopping, whose notice may still be on its way: asked again at the next sweep). Its run, moved on
+            // below, then starts it again off spot machines when the machine was taken back (see `advance_run`). Not a GitHub
+            // or GitLab job's: its code host says when its runner is lost, and the job is run again from there.
+            if j.state == "running" && j.provider == "local" && now.saturating_sub(j.launched_ms.unwrap_or(j.at_ms)) > 2 * 60_000 {
+                if let (Some(id), Some(launcher)) = (&j.machine_id, self.config.launchers.iter().find(|l| l.cloud == j.cloud)) {
+                    if self.launcher_call(&plane_url, launcher, "/status", serde_json::json!({ "id": id })).await.is_ok_and(|v| v["state"] == "gone") {
+                        // (As it stands now, not as listed: its notice may have come meanwhile, or its end been said.)
+                        match get_json::<Job>(self.store, &key).await? { Some(fresh) if fresh.ended_ms.is_none() => j = fresh, _ => continue }
+                        j.state = "failed".into();
+                        j.ended_ms = Some(now);
+                        j.error = Some(if j.interrupted { format!("{} took back its spot machine", cloud_name(&j.cloud)) } else { "its machine ended before the job did".into() });
+                        self.settle(&plane_url, &mut j).await;
+                        self.keep(&key, &j).await?;
+                        continue;
+                    }
+                }
+            }
             // A machine that never began its job (a container that did not start, a spot machine that did not boot):
             // placed again, twice at most, then the job fails with why (GitHub would otherwise keep it queued for a day).
             if j.state == "launched" && !j.seen_in_progress {
                 let age = now.saturating_sub(j.launched_ms.unwrap_or(j.at_ms));
-                let (wait, up_by) = if j.cloud == "aws" { (8 * 60_000, 90_000) } else { (3 * 60_000, 60_000) };
+                let (wait, up_by) = if j.cloud == "aws" || j.cloud == "gcp" { (8 * 60_000, 90_000) } else { (3 * 60_000, 60_000) };
                 let late = age > wait;
                 // Once it has had time to come up and has begun nothing, GitHub is asked at every sweep whether the
                 // job it is for still waits (one request): a machine nobody waits for is ended then, not minutes later.
@@ -5846,6 +5894,14 @@ mod price_tests {
     fn every_cloud_has_its_name_and_any_other_is_said_as_it_is() {
         for (id, name) in CLOUD_NAMES { assert_eq!(cloud_name(id), name) }
         assert_eq!((cloud_name("aws"), cloud_name(AWS_ON_DEMAND), cloud_name("machine")), ("AWS", "AWS on-demand", "machine"));
+        assert_eq!(cloud_name("gcp"), "GCP");
+    }
+
+    #[test]
+    fn each_launcher_cloud_has_its_own_capacity() {
+        assert_eq!(capacity_of("cloudflare"), Capacity::cloudflare());
+        assert_eq!(capacity_of("gcp"), Capacity::gcp());
+        assert_eq!(capacity_of("modal"), Capacity::modal());
     }
 
     #[test]

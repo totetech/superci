@@ -1,0 +1,18 @@
+# Installed as /etc/systemd/system/superci-launcher-sweep.service by install.sh; superci-launcher-sweep.timer starts it. It asks
+# the launcher on 127.0.0.1:8080 to delete this plane's terminated and overdue job VMs (POST /sweep). Systemd puts the value of
+# SWEEP_SECRET from the env file into the header as one argument; /sweep answers 404 to a request without it. The request is cut at
+# 300 seconds, so a sweep that does not return does not hold the unit, and with it the next run of the timer.
+[Unit]
+Description=Sweep the SuperCI launcher's leftover job VMs
+After=superci-launcher.service
+
+[Service]
+Type=oneshot
+User=superci-launcher
+Group=superci-launcher
+EnvironmentFile=/etc/superci-launcher.env
+ExecStart=/usr/bin/curl -sS -f --max-time 300 -X POST -H "x-superci-sweep: ${SWEEP_SECRET}" http://127.0.0.1:8080/sweep
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true

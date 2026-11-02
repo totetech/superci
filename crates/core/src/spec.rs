@@ -21,7 +21,7 @@ pub struct Spec {
     #[serde(default, skip_serializing_if = "Option::is_none")] pub image: Option<String>,
     /// One GPU: by name (one of `GPUS`), or "any" (each place's least costly).
     #[serde(default, skip_serializing_if = "Option::is_none")] pub gpu: Option<String>,
-    /// Only this provider ("aws", "cloudflare", "modal"): `provider=aws`.
+    /// Only this provider ("aws", "cloudflare", "modal", "gcp"): `provider=aws`.
     #[serde(default, skip_serializing_if = "Option::is_none")] pub cloud: Option<String>,
     /// Whether it may run on a spot machine (one its cloud can take back): unset or `true`, it may; `false`, never
     /// (`spot=false`: a deploy, a job that must not be run twice). A label's `spot=true` undoes a default of `false`.
@@ -80,7 +80,7 @@ pub fn disk_speed(cpu: u32, disk_gb: u32, s: &Spec) -> (u32, u32) {
 }
 
 /// The clouds a label may name.
-pub const CLOUDS: [&str; 3] = ["aws", "cloudflare", "modal"];
+pub const CLOUDS: [&str; 4] = ["aws", "cloudflare", "modal", "gcp"];
 
 /// The GPUs a label may name, least costly first.
 pub const GPUS: [&str; 8] = ["t4", "l4", "a10g", "l40s", "a100", "h100", "h200", "b200"];
@@ -317,6 +317,10 @@ impl Capacity {
     /// Modal sandboxes (non-preemptible, x64); standard 2 CPU, 8 GB; any of Modal's GPUs, one per sandbox.
     pub fn modal() -> Self { Capacity { max_cpu: 64, max_ram_gb: 336, max_disk_gb: 512, arch: vec!["x64".into()], os: vec!["linux".into()], on_demand: true, images: vec!["ubuntu24".into()],
         std_cpu: 2, std_ram_gb: 8, std_disk_gb: 64, ram_per_cpu: 4, min_ram_per_cpu: 0, gpus: GPUS.map(String::from).to_vec(), scratch: false } }
+    /// GCP Compute Engine through a launcher (spot machines, x64, Linux); up to 64 CPU, 256 GB and 500 GB disk, no GPUs;
+    /// standard 2 CPU, 8 GB, 60 GB disk.
+    pub fn gcp() -> Self { Capacity { max_cpu: 64, max_ram_gb: 256, max_disk_gb: 500, arch: vec!["x64".into()], os: vec!["linux".into()], on_demand: true, images: vec!["ubuntu24".into()],
+        std_cpu: 2, std_ram_gb: 8, std_disk_gb: 60, ram_per_cpu: 4, min_ram_per_cpu: 0, gpus: vec![], scratch: false } }
 }
 
 /// EC2 instance types for a machine, best first (fallbacks for when one has no spot capacity): the smallest size with
@@ -599,11 +603,23 @@ mod tests {
     }
 
     #[test]
+    fn gcp_sizes_the_machine_and_refuses_what_it_has_not() {
+        let s = |l: &str| Spec::parse(l, "superci").unwrap().unwrap();
+        assert_eq!(Capacity::gcp().fit(&s("superci")), Ok(Size { cpu: 2, ram_gb: 8, disk_gb: 60, gpu: None }));
+        assert_eq!(Capacity::gcp().fit(&s("superci/cpu=4")), Ok(Size { cpu: 4, ram_gb: 16, disk_gb: 60, gpu: None }));
+        assert!(Capacity::gcp().refuses(&s("superci/cpu=65")).unwrap().contains("64 CPU"));
+        assert_eq!(Capacity::gcp().refuses(&s("superci/arch=arm64")), Some("x64 only".into()));
+        assert_eq!(Capacity::gcp().refuses(&s("superci/gpu=any")), Some("no GPUs".into()));
+        assert!(Capacity::gcp().refuses(&s("superci/os=windows")).unwrap().contains("Linux only"));
+        assert_eq!(s("superci/provider=gcp").cloud.as_deref(), Some("gcp"));
+    }
+
+    #[test]
     fn every_key_says_what_it_takes_when_given_what_it_does_not() {
         let err = |label: &str| Spec::parse(label, "superci").unwrap().unwrap_err();
         for (label, said) in [
             ("superci/ram=0", "ram is GB of memory from 1 to 1536, not “0”"), ("superci/disk=16001", "disk is GB of disk from 1 to 16000, not “16001”"),
-            ("superci/os=bsd", "os is linux or windows or macos, not “bsd”"), ("superci/provider=gcp", "provider is aws or cloudflare or modal, not “gcp”"),
+            ("superci/os=bsd", "os is linux or windows or macos, not “bsd”"), ("superci/provider=bsd", "provider is aws or cloudflare or modal or gcp, not “bsd”"),
             ("superci/gpu=v100", "gpu is any, or one of t4, l4, a10g, l40s, a100, h100, h200, b200, not “v100”"),
         ] {
             assert_eq!(err(label), format!("{said} (runs-on: {label})"));

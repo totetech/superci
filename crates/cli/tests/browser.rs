@@ -7853,10 +7853,10 @@ fn a_machine_taken_back_is_noted_once_and_a_jobs_log_is_githubs_then_what_its_ma
         m.insert("runner:r-live".into(), "74".into());
     }
     let record = |k: &str| served.store.under(k).into_iter().find(|(key, _)| key == k).map(|(_, v)| v).unwrap_or_default();
-    // A run from a computer's machine taken back: started again at once, it says; said again, noted once.
+    // A run from a computer's machine taken back: started again, it says; said again, noted once.
     for _ in 0..2 {
         let (status, said) = say(&format!("/interrupted?runner=r-local&t={notice}"), "");
-        assert!(status == 200 && said.contains("starts the job again by itself at once"), "{status} {said}");
+        assert!(status == 200 && said.contains("starts the job again by itself, off spot machines"), "{status} {said}");
     }
     assert!(record("job:71")["interrupted"] == true && served.store.under("spot:interrupted:").len() == 1, "{:?}", served.store.under("spot:"));
     // A job over already: nothing noted.
@@ -12353,6 +12353,8 @@ mod gitlab_in_browser {
             let mut m = served.store.0.lock().unwrap();
             let mut j: serde_json::Value = serde_json::from_str(&m[&key]).unwrap();
             j["interrupted"] = serde_json::json!(true);
+            // (The testkit runs its jobs on its own containers, Cloudflare's: this one's machine is AWS's spot machine.)
+            j["cloud"] = serde_json::json!("aws");
             m.insert(key, j.to_string());
         }
         assert!(served.gitlab_webhook(served.gitlab.finish(e, "failed", "", now())) < 300);
@@ -13640,7 +13642,8 @@ mod runs_suite_in_browser {
         // AWS takes its spot machine back (its machine said so, with its link: here, noted on its job), and the runner
         // ends the job as failed.
         let key = served.store.under("job:").into_iter().map(|(k, _)| k).find(|k| !k.contains(':') || k.starts_with("job:")).unwrap();
-        { let mut m = served.store.0.lock().unwrap(); let mut j: serde_json::Value = serde_json::from_str(&m[&key]).unwrap(); j["interrupted"] = true.into(); m.insert(key.clone(), j.to_string()); }
+        // (The testkit runs its jobs on its own containers, Cloudflare's: this one's machine is AWS's spot machine.)
+        { let mut m = served.store.0.lock().unwrap(); let mut j: serde_json::Value = serde_json::from_str(&m[&key]).unwrap(); j["interrupted"] = true.into(); j["cloud"] = "aws".into(); m.insert(key.clone(), j.to_string()); }
         first.finish("failed");
         // Started again, on a machine of its own off spot machines: a new job of the run, and the first said so.
         let end = std::time::Instant::now() + std::time::Duration::from_secs(15);
@@ -15844,7 +15847,7 @@ mod commands_dashboard_in_browser {
         let setting = |n: &str| served.aws.settings(superci_testkit::PLANE).into_iter().find(|(k, _)| k == n).map(|(_, v)| v);
         let page = || common::words(&common::part(&link, "/?p=runners&fragment=1").1);
         // Refused: a provider that is not one; a dialog shown for another control plane.
-        let (status, _, said) = common::post(&link, "/runners/remove", &[("cloud", "gcp")]);
+        let (status, _, said) = common::post(&link, "/runners/remove", &[("cloud", "hetzner")]);
         assert!(status == 400 && common::words(&said).contains("Unknown provider"), "{status}");
         let (status, _, said) = common::post(&link, "/runners/remove", &[("cloud", "aws"), ("plane", "anotherplane1")]);
         assert!(status == 409 && common::words(&said).contains("Another control plane is in use now"), "{status}");

@@ -1,0 +1,13 @@
+# Installed as /etc/systemd/system/superci-launcher-sweep.timer by install.sh. It starts superci-launcher-sweep.service five
+# minutes after boot and ten minutes after each earlier start. (Persistent= has no effect on a timer without OnCalendar=, so a
+# run missed while the VM was off is not made up; the next boot starts the schedule again.)
+[Unit]
+Description=Sweep the SuperCI launcher's leftover job VMs every ten minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

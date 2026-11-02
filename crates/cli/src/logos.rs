@@ -29,7 +29,8 @@ const MARKS: &[(&str, &str, &str)] = &[
 ];
 
 /// A provider's path and colour (none for one not drawn here).
-fn mark(provider: &str) -> Option<(&'static str, &'static str)> { MARKS.iter().find(|(p, ..)| *p == provider).map(|(_, path, color)| (*path, *color)) }
+/// (A GCP launcher's cloud is `gcp`: Google Cloud's mark.)
+fn mark(provider: &str) -> Option<(&'static str, &'static str)> { let provider = if provider == "gcp" { "googlecloud" } else { provider }; MARKS.iter().find(|(p, ..)| *p == provider).map(|(_, path, color)| (*path, *color)) }
 
 /// A provider's logo on a rounded tile (`size` in px).
 pub fn logo(provider: &str, size: u32) -> String {
@@ -92,6 +93,7 @@ mod tests {
         }
         for (name, path) in ICONS { assert!(icon(name).contains(&format!(r#"d="{path}""#)), "{name}") }
         assert!(logo("aws", 20).contains("#232F3E") && logo("azure", 20).contains("#0078D4"));
+        assert!(logo("gcp", 20) == logo("googlecloud", 20) && bare("gcp", 16) == bare("googlecloud", 16) && logo("gcp", 20).contains("<svg"), "a GCP launcher's cloud is drawn with Google Cloud's mark");
         assert!(logo("nowhere", 20).contains("var(--card-2)") && !logo("nowhere", 20).contains("<svg"));
         assert_eq!(bare("nowhere", 16), "");
         assert!(icon("nowhere").contains(r#"d="""#));

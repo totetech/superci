@@ -1241,11 +1241,13 @@ const SPOT_WATCH: &str = r#"# AWS takes spot machines back with two minutes' not
   done ) &
 "#;
 
-/// What a spot machine runs when the control plane has its notice (`SPOT_WATCH`): the reason written as a GitHub
-/// error into the output of the job's step running now (the runner's worker reads it from there, as it reads a step's
-/// own `::error::`), so the job's log and its annotations say it beside the runner's "shutdown signal".
-pub fn reclaim_said(next: &str) -> String {
-    let line = format!("::error title=SuperCI::AWS is taking this spot machine back (two minutes’ notice). {next}");
+/// What a spot machine runs when the control plane has its notice (`SPOT_WATCH`, or a launcher's machine's own): the
+/// reason written as a GitHub error into the output of the job's step running now (the runner's worker reads it from
+/// there, as it reads a step's own `::error::`), so the job's log and its annotations say it beside the runner's
+/// "shutdown signal". `cloud` is the machine's cloud (`aws`, `gcp`), named as people read it, with the notice it gives.
+pub fn reclaim_said(cloud: &str, next: &str) -> String {
+    let notice = match cloud { "aws" => " (two minutes’ notice)", "gcp" => " (thirty seconds’ notice)", _ => "" };
+    let line = format!("::error title=SuperCI::{} is taking this spot machine back{notice}. {next}", crate::plane::cloud_name(cloud));
     format!("w=$(pgrep -f Runner.Worker | head -1)\n[ -n \"$w\" ] || exit 0\nfor p in $(pgrep -P \"$w\"); do printf '\\n%s\\n' '{}' > /proc/$p/fd/1 2>/dev/null && break; done\n", line.replace('\'', ""))
 }
 

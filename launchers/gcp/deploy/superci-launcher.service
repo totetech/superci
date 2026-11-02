@@ -1,0 +1,25 @@
+# Installed as /etc/systemd/system/superci-launcher.service by install.sh. The launcher listens on 127.0.0.1 only; Caddy
+# terminates TLS and proxies to it. Its configuration is /etc/superci-launcher.env (root-owned, mode 0600), which systemd
+# reads as root, so the service's own user cannot read it.
+[Unit]
+Description=SuperCI launcher for GCP
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=superci-launcher
+Group=superci-launcher
+WorkingDirectory=/opt/superci-launcher
+EnvironmentFile=/etc/superci-launcher.env
+ExecStart=/opt/superci-launcher/.venv/bin/uvicorn app:api --host 127.0.0.1 --port 8080
+Restart=always
+RestartSec=5
+# The launcher writes nothing to disk and holds no privilege.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
